@@ -34,15 +34,27 @@ namespace RandomGamesPlayedWhileIdle {
 						$"profiles/{bot.SteamID}/games")).ConfigureAwait(false);
 
 				if (response?.Content?.SelectSingleNode("""//*[@id="gameslist_config"]""") is Element element) {
-					List<uint> list = GamesListRegex()
-						.Matches(element.OuterHtml)
-						.Select(static x => uint.Parse(x.Groups[1].Value, CultureInfo.InvariantCulture))
+					ASF.ArchiLogger.LogGenericInfo("Retrieved games data: " + new string(element.OuterHtml.AsSpan(0, Math.Min(element.OuterHtml.Length, 500))));
+
+					try {
+						var matches = GamesListRegex().Matches(element.OuterHtml);
+
+						var gameList = matches.Select(match => new {
+							AppID = uint.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture),
+							PlaytimeMinutes = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture) // Assuming playtime is in minutes
+						})
+						.OrderBy(game => game.PlaytimeMinutes) // Sort by playtime (ascending)
+						.Take(MaxGamesPlayedConcurrently) // Take the N least played games
 						.ToList();
 
-					if (list.Count > 0) {
-						bot.BotConfig.GetType().GetProperty("GamesPlayedWhileIdle")?.SetValue(bot.BotConfig,
-							list.OrderBy(static _ => Guid.NewGuid())
-								.Take(Math.Min(MaxGamesPlayedConcurrently, list.Count)).ToImmutableList());
+						ASF.ArchiLogger.LogGenericInfo("Selected games and playtimes: " + string.Join(", ", gameList.Select(game => $"AppID: {game.AppID}, Playtime: {game.PlaytimeMinutes} minutes")));
+
+						if (gameList.Count > 0) {
+							bot.BotConfig.GetType().GetProperty("GamesPlayedWhileIdle")?.SetValue(bot.BotConfig, gameList.Select(game => game.AppID).ToImmutableList());
+						}
+					} catch (Exception ex) {
+						ASF.ArchiLogger.LogGenericError("Error while parsing game data: " + ex.Message);
+						ASF.ArchiLogger.LogGenericError("Raw data for debugging: " + element.OuterHtml);
 					}
 				}
 			} catch (Exception e) {
@@ -50,7 +62,7 @@ namespace RandomGamesPlayedWhileIdle {
 			}
 		}
 
-		[GeneratedRegex(@"{&quot;appid&quot;:(\d+),&quot;name&quot;:&quot;")]
+		[GeneratedRegex(@"{&quot;appid&quot;:(\d+),&quot;playtime_forever&quot;:(\d+),&quot;name&quot;:&quot;")]
 		private static partial Regex GamesListRegex();
 	}
 }
